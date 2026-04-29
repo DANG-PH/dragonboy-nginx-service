@@ -253,6 +253,13 @@ services:
     depends_on:
       - redis
 
+  nats:
+    image: nats:latest
+    container_name: nats
+    ports:
+      - '127.0.0.1:4222:4222'
+    restart: unless-stopped
+    
   rabbitmq:
     image: rabbitmq:management
     container_name: rabbitmq
