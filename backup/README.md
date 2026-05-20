@@ -23,6 +23,7 @@ git clone <repo-url>
 cd <repo>
 cp .env.example .env
 nano .env                    # điền password và config
+chmod +x backup/scripts/*.sh
 docker compose up -d         # bật stack
 ```
 
