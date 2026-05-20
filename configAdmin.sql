@@ -26,6 +26,7 @@ CREATE DATABASE pay_db;
 CREATE DATABASE game_data_db;
 
 -- Add sẵn các npc có sẵn vào game_data_db, kể cả chạy lại db khi container down và up lại
+USE game_data_db;
 
 -- game_data_db
 CREATE TABLE npc_base (
