@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Backup data (không bao giờ commit data DB)
+backup/data/
+backup/*.log
+
+# rclone config (chứa OAuth token)
+rclone.conf
+.rclone.conf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

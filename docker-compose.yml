@@ -238,7 +238,7 @@ services:
   #     - ../api_gateway/.env.local
   redis:
     image: redis
-    container_name: redis
+    container_name: ${REDIS_CONTAINER}
     ports:
       - '127.0.0.1:6379:6379'
 
@@ -248,8 +248,8 @@ services:
     ports:
       - '127.0.0.1:5540:5540'
     environment:
-      - RI_APP_USERNAME=admin
-      - RI_APP_PASSWORD=haidang
+      - RI_APP_USERNAME=${REDIS_INSIGHT_USERNAME}
+      - RI_APP_PASSWORD=${REDIS_INSIGHT_PASSWORD}
     depends_on:
       - redis
 
@@ -267,16 +267,16 @@ services:
       - '127.0.0.1:5674:5672'
       - '127.0.0.1:15674:15672'
     environment:
-      RABBITMQ_DEFAULT_USER: dang123
-      RABBITMQ_DEFAULT_PASS: 'haidang'
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
 
   mysql-nro:
     image: mysql:8.0
-    container_name: mysql-nro
+    container_name: ${MYSQL_CONTAINER}
     ports:
-      - '127.0.0.1:3306:3306' # Bind localhost tránh máy ngoài connect (phải qua nginx tcp proxy)
+      - '127.0.0.1:3306:3306'
     environment:
-      MYSQL_ROOT_PASSWORD: 'Phamhaidang112@'
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASS}
     volumes:
       - ./configAdmin.sql:/docker-entrypoint-initdb.d/configAdmin.sql
 
@@ -286,7 +286,7 @@ services:
     ports:
       - '127.0.0.1:8081:80'
     environment:
-      PMA_HOST: mysql-nro
+      PMA_HOST: ${MYSQL_CONTAINER}
       PMA_ABSOLUTE_URI: https://data.ngocrongdark.com/
     depends_on:
       - mysql-nro
@@ -316,13 +316,13 @@ services:
 
   mongo:
     image: mongo
-    container_name: mongo
+    container_name: ${MONGO_CONTAINER}
     restart: always
     ports:
       - '127.0.0.1:27017:27017'
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: haidang
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS}
 
   mongo-express:
     image: mongo-express
@@ -331,21 +331,21 @@ services:
     ports:
       - '127.0.0.1:8082:8081'
     environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
-      ME_CONFIG_MONGODB_ADMINPASSWORD: haidang
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_USER}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_PASS}
       ME_CONFIG_MONGODB_AUTH_DATABASE: admin
-      ME_CONFIG_MONGODB_SERVER: mongo
-      ME_CONFIG_BASICAUTH_USERNAME: dang123
-      ME_CONFIG_BASICAUTH_PASSWORD: haidang
+      ME_CONFIG_MONGODB_SERVER: ${MONGO_CONTAINER}
+      ME_CONFIG_BASICAUTH_USERNAME: ${ME_BASICAUTH_USER}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${ME_BASICAUTH_PASS}
     depends_on:
       - mongo
   postgres:
     image: postgres:15
-    container_name: postgres
+    container_name: ${POSTGRES_CONTAINER}
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: haidang
-      POSTGRES_DB: admin_db
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASS}
+      POSTGRES_DB: ${PG_DB}
     ports:
       - '127.0.0.1:5432:5432'
 
@@ -353,8 +353,8 @@ services:
     image: dpage/pgadmin4
     container_name: pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: dangph.ptit@gmail.com
-      PGADMIN_DEFAULT_PASSWORD: haidang
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASS}
     ports:
       - '127.0.0.1:5050:80'
     depends_on:
