@@ -65,7 +65,7 @@ WHITELIST_IPS=(
   "103.116.52.219"
 )
 
-# Port DB cho whitelist (mysql, redis, postgres, rabbitmq, mongo)
+# Port DB cho whitelist — phải khớp với stream block trong nginx.conf
 WHITELIST_PORTS=(
   "33306"
   "36379"
@@ -89,19 +89,20 @@ cat <<'EOF'
 ║       BOOTSTRAP - dragonboy-nginx-service                ║
 ║                                                          ║
 ║  Script tự động setup VPS mới từ A-Z:                    ║
-║    1. Cài tool cơ bản (curl, git, htpasswd...)           ║
-║    2. Set timezone Asia/Ho_Chi_Minh                      ║
-║    3. Tạo swap 2GB                                       ║
-║    4. Cài Docker                                         ║
-║    5. Cấu hình UFW firewall                              ║
-║    6. Tạo file .env (yêu cầu user điền)                  ║
-║    7. Tạo htpasswd cho nginx                             ║
-║    8. Cài certbot + lấy SSL cho 13 domain                ║
-║    9. Setup auto-renewal SSL                             ║
-║   10. docker compose up -d                               ║
-║   11. Cài rclone + cấu hình Google Drive (OAuth)         ║
-║   12. Logrotate                                          ║
-║   13. Đăng ký cron backup                                ║
+║    1.  Cài tool cơ bản (curl, git, htpasswd...)          ║
+║    2.  Set timezone Asia/Ho_Chi_Minh                     ║
+║    3.  Tạo swap 2GB + vm.swappiness=10                   ║
+║    4.  Cài Docker                                        ║
+║    5.  Cấu hình UFW firewall                             ║
+║    6.  Tạo file .env (yêu cầu user điền)                 ║
+║    7.  Tạo htpasswd cho nginx                            ║
+║    8.  Cài certbot + lấy SSL + fix permission            ║
+║    9.  Setup auto-renewal SSL                            ║
+║   10.  docker compose up -d                              ║
+║   11.  Verify nginx config + DB containers               ║
+║   12.  Cài rclone + cấu hình Google Drive (OAuth)        ║
+║   13.  Logrotate                                         ║
+║   14.  Đăng ký cron backup                               ║
 ║                                                          ║
 ║  Thời gian: ~15-20 phút                                  ║
 ║                                                          ║
@@ -122,7 +123,7 @@ if ! ask_yn "Bắt đầu setup?"; then
 fi
 
 # ============ BƯỚC 1: CÀI TOOL CƠ BẢN ============
-log_step "Bước 1/13: Cài tool cơ bản"
+log_step "Bước 1/14: Cài tool cơ bản"
 
 log_action "apt update..."
 apt update -qq
@@ -143,7 +144,7 @@ apt install -y -qq \
 log_ok "Đã cài tool cơ bản"
 
 # ============ BƯỚC 2: TIMEZONE ============
-log_step "Bước 2/13: Set timezone"
+log_step "Bước 2/14: Set timezone"
 
 CURRENT_TZ=$(timedatectl show --property=Timezone --value)
 if [ "$CURRENT_TZ" = "Asia/Ho_Chi_Minh" ]; then
@@ -151,11 +152,14 @@ if [ "$CURRENT_TZ" = "Asia/Ho_Chi_Minh" ]; then
 else
   log_action "Đổi timezone từ $CURRENT_TZ → Asia/Ho_Chi_Minh..."
   timedatectl set-timezone Asia/Ho_Chi_Minh
-  log_ok "Timezone: $(timedatectl show --property=Timezone --value)"
+  # [PATCH] Restart cron để daemon nhận timezone mới — nếu không cron vẫn
+  # tính schedule theo timezone cũ (thường UTC) → backup chạy sai giờ
+  systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || true
+  log_ok "Timezone: $(timedatectl show --property=Timezone --value) (đã restart cron)"
 fi
 
-# ============ BƯỚC 3: SWAP ============
-log_step "Bước 3/13: Tạo swap"
+# ============ BƯỚC 3: SWAP + SWAPPINESS ============
+log_step "Bước 3/14: Tạo swap 2GB + vm.swappiness"
 
 if [ -f /swapfile ] || swapon --show | grep -q "/swapfile"; then
   log_ok "Swap đã tồn tại"
@@ -174,8 +178,17 @@ else
   swapon --show
 fi
 
+# [PATCH] vm.swappiness=10 — chỉ dùng swap khi RAM còn 10%, tránh swap quá sớm
+if ! grep -q "vm.swappiness" /etc/sysctl.conf; then
+  echo 'vm.swappiness=10' >> /etc/sysctl.conf
+  sysctl -p > /dev/null
+  log_ok "vm.swappiness=10"
+else
+  log_ok "vm.swappiness đã config"
+fi
+
 # ============ BƯỚC 4: DOCKER ============
-log_step "Bước 4/13: Docker"
+log_step "Bước 4/14: Docker"
 
 if command -v docker &> /dev/null && docker compose version &> /dev/null; then
   log_ok "Docker đã cài: $(docker --version)"
@@ -188,7 +201,7 @@ else
 fi
 
 # ============ BƯỚC 5: UFW ============
-log_step "Bước 5/13: UFW Firewall"
+log_step "Bước 5/14: UFW Firewall"
 
 if ! command -v ufw &> /dev/null; then
   log_action "Cài UFW..."
@@ -205,12 +218,11 @@ else
   ufw default deny incoming
   ufw default allow outgoing
 
-  # SSH/HTTP/HTTPS — CỰC KỲ QUAN TRỌNG
-  ufw allow 22/tcp comment 'SSH'
-  ufw allow 80/tcp comment 'HTTP'
+  ufw allow 22/tcp  comment 'SSH'
+  ufw allow 80/tcp  comment 'HTTP'
   ufw allow 443/tcp comment 'HTTPS'
 
-  # Port DB whitelist cho VPS2, VPS3
+  # Whitelist IP VPS App → DB ports (khớp với stream block nginx.conf)
   for ip in "${WHITELIST_IPS[@]}"; do
     for port in "${WHITELIST_PORTS[@]}"; do
       ufw allow from "$ip" to any port "$port" comment "DB-$ip"
@@ -224,7 +236,7 @@ else
 fi
 
 # ============ BƯỚC 6: .ENV ============
-log_step "Bước 6/13: File .env"
+log_step "Bước 6/14: File .env"
 
 if [ -f "$REPO_ROOT/.env" ]; then
   log_ok "File .env đã tồn tại"
@@ -275,7 +287,7 @@ done
 log_ok ".env load OK, đã validate"
 
 # ============ BƯỚC 7: HTPASSWD ============
-log_step "Bước 7/13: Tạo htpasswd"
+log_step "Bước 7/14: Tạo htpasswd"
 
 if [ -f "$REPO_ROOT/htpasswd" ]; then
   log_action "Xoá htpasswd cũ..."
@@ -286,8 +298,8 @@ htpasswd -bc "$REPO_ROOT/htpasswd" "$HTPASSWD_USER" "$HTPASSWD_PASS"
 chmod 600 "$REPO_ROOT/htpasswd"
 log_ok "Đã tạo htpasswd với user '$HTPASSWD_USER'"
 
-# ============ BƯỚC 8: CERTBOT + SSL ============
-log_step "Bước 8/13: Certbot + SSL"
+# ============ BƯỚC 8: CERTBOT + SSL + FIX PERMISSION ============
+log_step "Bước 8/14: Certbot + SSL"
 
 if ! command -v certbot &> /dev/null; then
   log_action "Cài certbot..."
@@ -308,7 +320,7 @@ if [ -f "/etc/letsencrypt/live/${DOMAINS[0]}/fullchain.pem" ]; then
 fi
 
 if [ -z "$EXISTING_CERT" ]; then
-  log_warn "Sẽ dừng container nginx (nếu đang chạy) để certbot dùng port 80..."
+  log_warn "Dừng container nginx (nếu đang chạy) để certbot dùng port 80..."
   docker stop nginx 2>/dev/null || true
 
   log_action "Chạy certbot cho ${#DOMAINS[@]} domain..."
@@ -326,35 +338,47 @@ if [ -z "$EXISTING_CERT" ]; then
   log_ok "Đã lấy SSL cho ${#DOMAINS[@]} domain"
 fi
 
-# ============ BƯỚC 9: AUTO-RENEWAL SSL ============
-log_step "Bước 9/13: Setup auto-renewal SSL"
+# [PATCH] Fix permission để nginx container (chạy dưới user khác) đọc được cert
+# Thiếu bước này → nginx start xong báo lỗi "permission denied" khi đọc cert
+log_action "Fix permission /etc/letsencrypt..."
+chmod -R 755 /etc/letsencrypt/live
+chmod -R 755 /etc/letsencrypt/archive
+log_ok "Permission /etc/letsencrypt OK"
 
-RENEW_CRON="0 3 * * * certbot renew --quiet --deploy-hook 'docker exec nginx nginx -s reload 2>/dev/null || true'"
+# [PATCH] Restart nginx nếu bị stop trước đó (chạy bootstrap lần 2)
+# Tránh downtime không cần thiết giữa bước 8 và bước 10
+docker start nginx 2>/dev/null && log_ok "Restart nginx tạm (sẽ recreate ở bước 10)" || true
+
+# ============ BƯỚC 9: AUTO-RENEWAL SSL ============
+log_step "Bước 9/14: Setup auto-renewal SSL"
+
+RENEW_CRON="0 3 * * * certbot renew --quiet --deploy-hook 'chmod -R 755 /etc/letsencrypt/live /etc/letsencrypt/archive && docker exec nginx nginx -s reload 2>/dev/null || true'"
 
 if crontab -l 2>/dev/null | grep -q "certbot renew"; then
   log_ok "Cron renewal đã có"
 else
   EXISTING_CRON=$(crontab -l 2>/dev/null || echo "")
-  NEW_CRON="$EXISTING_CRON
-# Auto-renew SSL hàng ngày 3h sáng
-$RENEW_CRON"
-  echo "$NEW_CRON" | crontab -
+  echo "$EXISTING_CRON
+# Auto-renew SSL hàng ngày 3h sáng (fix permission sau renewal)
+$RENEW_CRON" | crontab -
   log_ok "Đã đăng ký cron auto-renewal (3h sáng hàng ngày)"
 fi
 
+# [PATCH] deploy-hook cũng fix permission sau renewal để cert mới nginx đọc được
+log_info "deploy-hook sẽ tự fix permission + reload nginx sau renewal"
+
 log_action "Test dry-run renewal..."
-if certbot renew --dry-run 2>&1 | tail -5 | grep -q "Congratulations\|success\|no renewals"; then
+if certbot renew --dry-run 2>&1 | tail -5 | grep -qE "Congratulations|success|no renewals|No renewals"; then
   log_ok "Dry-run renewal OK"
 else
-  log_warn "Dry-run renewal có warning, check kỹ"
+  log_warn "Dry-run renewal có warning, check kỹ sau"
 fi
 
 # ============ BƯỚC 10: DOCKER COMPOSE UP ============
-log_step "Bước 10/13: Bật docker-compose"
+log_step "Bước 10/14: Bật docker-compose"
 
 cd "$REPO_ROOT"
 
-# Verify docker-compose.yml tồn tại
 if [ ! -f "docker-compose.yml" ]; then
   log_error "Không tìm thấy docker-compose.yml"
   exit 1
@@ -369,20 +393,41 @@ sleep 20
 log_info "Trạng thái containers:"
 docker ps --format "table {{.Names}}\t{{.Status}}"
 
-# Verify 4 DB containers
+# ============ BƯỚC 11: VERIFY NGINX + DB ============
+log_step "Bước 11/14: Verify nginx config + DB containers"
+
+# [PATCH] Verify nginx config — stream block có thể lỗi nếu module không load
+log_action "Kiểm tra nginx config..."
+if docker exec nginx nginx -t 2>&1; then
+  log_ok "nginx config OK"
+else
+  log_error "nginx config lỗi! Kiểm tra:"
+  log_info "  docker logs nginx"
+  log_info "  docker exec nginx nginx -t"
+  exit 1
+fi
+
+# Verify DB containers
 echo ""
+log_action "Kiểm tra DB containers..."
+FAILED_CONTAINERS=0
 for container in "${MYSQL_CONTAINER:-mysql-nro}" "${MONGO_CONTAINER:-mongo}" "${POSTGRES_CONTAINER:-postgres}" "${REDIS_CONTAINER:-redis}"; do
   if docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
     log_ok "$container đang chạy"
   else
     log_error "$container KHÔNG chạy"
-    log_warn "Check log: docker compose logs $container"
-    exit 1
+    log_warn "  → docker compose logs $container"
+    FAILED_CONTAINERS=$((FAILED_CONTAINERS + 1))
   fi
 done
 
-# ============ BƯỚC 11: RCLONE ============
-log_step "Bước 11/13: Rclone"
+if [ "$FAILED_CONTAINERS" -gt 0 ]; then
+  log_error "$FAILED_CONTAINERS container lỗi, kiểm tra trước khi tiếp tục."
+  exit 1
+fi
+
+# ============ BƯỚC 12: RCLONE ============
+log_step "Bước 12/14: Rclone"
 
 if command -v rclone &> /dev/null; then
   log_ok "rclone đã cài: $(rclone version | head -1)"
@@ -446,8 +491,8 @@ fi
 rclone mkdir "$RCLONE_REMOTE" 2>/dev/null || true
 log_ok "Folder Drive sẵn sàng"
 
-# ============ BƯỚC 12: LOGROTATE ============
-log_step "Bước 12/13: Logrotate"
+# ============ BƯỚC 13: LOGROTATE ============
+log_step "Bước 13/14: Logrotate"
 
 LOGROTATE_CONF="/etc/logrotate.d/db-backup"
 
@@ -464,8 +509,8 @@ EOF
 
 log_ok "Đã setup logrotate (rotate weekly, giữ 4 tuần)"
 
-# ============ BƯỚC 13: SETUP CRON BACKUP ============
-log_step "Bước 13/13: Setup cron backup"
+# ============ BƯỚC 14: SETUP CRON BACKUP ============
+log_step "Bước 14/14: Setup cron backup"
 
 if [ ! -x "$SCRIPT_DIR/setup.sh" ]; then
   chmod +x "$SCRIPT_DIR"/*.sh
@@ -486,27 +531,29 @@ ${GREEN}╔═══════════════════════
 ${BLUE}Đã setup:${NC}
   ✓ Tool cơ bản (curl, git, htpasswd, dig...)
   ✓ Timezone Asia/Ho_Chi_Minh
-  ✓ Swap 2GB
+  ✓ Swap 2GB + vm.swappiness=10
   ✓ Docker + Docker Compose
-  ✓ UFW firewall (port 22, 80, 443, DB ports cho IP whitelist)
+  ✓ UFW firewall (22, 80, 443 + DB ports whitelist IP VPS App)
   ✓ .env (chmod 600)
   ✓ htpasswd (user: ${HTPASSWD_USER})
-  ✓ SSL cho ${#DOMAINS[@]} domain
-  ✓ Auto-renew SSL (3h sáng hàng ngày)
+  ✓ SSL cho ${#DOMAINS[@]} domain + fix permission /etc/letsencrypt
+  ✓ Auto-renew SSL (3h sáng, tự fix permission + reload nginx)
   ✓ docker-compose stack đang chạy
+  ✓ nginx config verified (nginx -t)
+  ✓ DB containers verified
   ✓ rclone + Google Drive
   ✓ Logrotate cho backup.log
   ✓ Cron backup DB (${CRON_HOUR:-4}:$(printf '%02d' "${CRON_MINUTE:-0}") hàng ngày)
 
-${BLUE}Các bước tiếp theo (khuyến nghị):${NC}
+${BLUE}Các bước tiếp theo:${NC}
 
 1. ${YELLOW}Test backup tay:${NC}
    $SCRIPT_DIR/backup.sh
 
-2. ${YELLOW}Test các domain HTTPS:${NC}
+2. ${YELLOW}Test HTTPS:${NC}
    curl -I https://${DOMAINS[0]}
 
-3. ${YELLOW}Xem cron đã đăng ký:${NC}
+3. ${YELLOW}Xem cron:${NC}
    crontab -l
 
 4. ${YELLOW}Theo dõi log:${NC}
@@ -515,10 +562,14 @@ ${BLUE}Các bước tiếp theo (khuyến nghị):${NC}
 5. ${YELLOW}Khi cần restore:${NC}
    $SCRIPT_DIR/restore.sh <mysql|mongo|pg|redis> <file>
 
+${YELLOW}⚠ REMINDER — HSTS Preload:${NC}
+  Truy cập https://hstspreload.org
+  Điền domain → Submit để browser luôn dùng HTTPS từ lần đầu.
+  (chỉ cần làm 1 lần sau khi SSL ổn định)
+
 ${YELLOW}LƯU Ý:${NC}
-  - DNS của ${#DOMAINS[@]} domain đã trỏ về IP VPS này.
-  - Nếu chưa, sửa DNS rồi chạy lại certbot.
-  - Tài liệu chi tiết: $REPO_ROOT/backup/BACKUP_RESTORE_GUIDE.md
+  - Nếu DNS chưa trỏ đúng, sửa xong chạy lại certbot.
+  - Tài liệu: $REPO_ROOT/backup/BACKUP_RESTORE_GUIDE.md
 
 EOF
 
