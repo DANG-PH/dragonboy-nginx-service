@@ -174,5 +174,9 @@ services:
     depends_on:
       - prometheus
 
+# Named Volume/Bind Mount
+volumes:
+  prometheus_data:
+  grafana_data:
 
 
