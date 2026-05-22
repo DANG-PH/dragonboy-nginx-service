@@ -82,6 +82,28 @@ else
   rclone mkdir "$RCLONE_REMOTE"
 fi
 
+# ============ CHECK GITHUB ============
+echo ""
+echo "Kiểm tra GitHub SSH..."
+if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+  echo "✓ SSH GitHub OK"
+else
+  echo "✗ SSH GitHub chưa OK"
+  echo "  ssh-keygen -t ed25519 -C 'backup-vps' -f ~/.ssh/id_ed25519_github_backup"
+  echo "  cat ~/.ssh/id_ed25519_github_backup.pub"
+  echo "  → Thêm vào: GitHub → Settings → SSH Keys"
+  exit 1
+fi
+
+# Clone repo data nếu chưa có
+if [ ! -d "$GITHUB_BACKUP_DIR" ]; then
+  echo "Clone repo dragonboy-db-backups..."
+  git clone git@github.com:DANG-PH/dragonboy-db-backups.git "$(dirname "$GITHUB_BACKUP_DIR")"
+  echo "✓ Clone xong"
+else
+  echo "✓ Repo data đã có tại $GITHUB_BACKUP_DIR"
+fi
+
 # ============ CẤP QUYỀN SCRIPT ============
 chmod +x "$SCRIPT_DIR/backup.sh" "$SCRIPT_DIR/restore.sh"
 echo "✓ Đã cấp quyền execute cho scripts"

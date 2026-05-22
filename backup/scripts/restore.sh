@@ -1,6 +1,6 @@
 #!/bin/bash
 # Restore script
-# Usage: ./restore.sh <mysql|mongo|pg|redis> <backup_file>
+# Usage: ./restore.sh <mysql|mongo|pg|redis> <backup_file> [--from-github|--from-drive]
 
 set -euo pipefail
 
@@ -21,28 +21,75 @@ set +a
 
 DB="${1:-}"
 FILE="${2:-}"
+SOURCE="${3:-}"
 
 if [ -z "$DB" ] || [ -z "$FILE" ]; then
-  echo "Usage: $0 <mysql|mongo|pg|redis> <backup_file>"
+  echo "Usage: $0 <mysql|mongo|pg|redis> <backup_file> [--from-github|--from-drive]"
   echo ""
   echo "Backup có sẵn local trong $BACKUP_DIR:"
   ls -1 "$BACKUP_DIR" 2>/dev/null || echo "  (trống)"
   echo ""
-  echo "Để tải từ Google Drive về local trước:"
-  echo "  rclone copy $RCLONE_REMOTE/<tên_file> $BACKUP_DIR/"
+  echo "Ví dụ:"
+  echo "  $0 mysql mysql_2026-05-22_0400.sql.gz"
+  echo "  $0 mysql mysql_2026-05-22_0400.sql.gz --from-github"
+  echo "  $0 mysql mysql_2026-05-22_0400.sql.gz --from-drive"
   exit 1
 fi
 
-# Nếu file không có path → tìm trong BACKUP_DIR
+# ============ TẢI FILE NẾU CẦN ============
+case "$SOURCE" in
+  --from-github)
+    echo "Đang pull từ GitHub..."
+    cd "$GITHUB_BACKUP_DIR/.."
+    git pull origin main
+    echo "✓ Pull xong"
+    if [ -f "$GITHUB_BACKUP_DIR/$FILE" ]; then
+      cp "$GITHUB_BACKUP_DIR/$FILE" "$BACKUP_DIR/"
+      echo "✓ Copy từ GitHub về local: $FILE"
+    else
+      echo "Lỗi: không tìm thấy $FILE trong GitHub repo"
+      echo "Các file có sẵn:"
+      ls -1 "$GITHUB_BACKUP_DIR" 2>/dev/null || echo "  (trống)"
+      exit 1
+    fi
+    ;;
+  --from-drive)
+    echo "Đang tải từ Google Drive..."
+    rclone copy "$RCLONE_REMOTE/$FILE" "$BACKUP_DIR/"
+    if [ -f "$BACKUP_DIR/$FILE" ]; then
+      echo "✓ Tải từ Drive về local: $FILE"
+    else
+      echo "Lỗi: không tìm thấy $FILE trên Drive"
+      echo "Các file có sẵn:"
+      rclone ls "$RCLONE_REMOTE" 2>/dev/null || echo "  (trống)"
+      exit 1
+    fi
+    ;;
+  "")
+    # Không có option → tìm local
+    ;;
+  *)
+    echo "Option không hợp lệ: $SOURCE (phải là --from-github hoặc --from-drive)"
+    exit 1
+    ;;
+esac
+
+# ============ TÌM FILE LOCAL ============
 if [ ! -f "$FILE" ]; then
   if [ -f "$BACKUP_DIR/$FILE" ]; then
     FILE="$BACKUP_DIR/$FILE"
   else
     echo "Lỗi: không tìm thấy file $FILE"
+    echo ""
+    echo "Thử tải từ nguồn khác:"
+    echo "  $0 $DB $FILE --from-github"
+    echo "  $0 $DB $FILE --from-drive"
     exit 1
   fi
 fi
 
+# ============ CONFIRM ============
+echo ""
 echo "Sắp restore $DB từ: $FILE"
 echo "⚠️  CẢNH BÁO: Dữ liệu hiện tại sẽ bị ghi đè."
 read -p "Tiếp tục? (gõ 'yes' để xác nhận): " confirm
@@ -51,6 +98,7 @@ if [ "$confirm" != "yes" ]; then
   exit 0
 fi
 
+# ============ RESTORE ============
 case "$DB" in
   mysql)
     gunzip < "$FILE" | docker exec -i "$MYSQL_CONTAINER" sh -c "exec mysql -uroot -p\"$MYSQL_PASS\""

@@ -66,9 +66,24 @@ echo "$LOG_PREFIX [Drive] Đang upload..."
 rclone copy "$BACKUP_DIR" "$RCLONE_REMOTE" --include "*_$DATE.*"
 echo "$LOG_PREFIX [Drive] Done."
 
+# ============ PUSH GITHUB ============
+echo "$LOG_PREFIX [GitHub] Đang copy & push..."
+cp "$BACKUP_DIR"/*_$DATE.* "$GITHUB_BACKUP_DIR/"
+cd "$GITHUB_BACKUP_DIR/.."
+git add data/
+git commit -m "backup: $DATE"
+git push origin main
+echo "$LOG_PREFIX [GitHub] Done."
+
 # ============ DỌN FILE CŨ ============
 echo "$LOG_PREFIX [Cleanup] Xoá file cũ..."
 find "$BACKUP_DIR" -type f -mtime +$LOCAL_RETENTION_DAYS -delete
 rclone delete "$RCLONE_REMOTE" --min-age ${DRIVE_RETENTION_DAYS}d
+find "$GITHUB_BACKUP_DIR" -type f \( -name "*.gz" -o -name "*.rdb" \) -mtime +$LOCAL_RETENTION_DAYS -delete
+cd "$GITHUB_BACKUP_DIR/.."
+git add data/
+git commit -m "cleanup: remove backups older than $LOCAL_RETENTION_DAYS days" --allow-empty
+git push origin main
+echo "$LOG_PREFIX [Cleanup] Done."
 
 echo "$LOG_PREFIX === Hoàn tất ==="
