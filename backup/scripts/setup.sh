@@ -85,7 +85,8 @@ fi
 # ============ CHECK GITHUB ============
 echo ""
 echo "Kiểm tra GitHub SSH..."
-if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+SSH_OUTPUT=$(ssh -T git@github.com 2>&1 || true)
+if echo "$SSH_OUTPUT" | grep -q "successfully authenticated"; then
   echo "✓ SSH GitHub OK"
 else
   echo "✗ SSH GitHub chưa OK"
