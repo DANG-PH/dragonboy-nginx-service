@@ -332,6 +332,7 @@ if [ -z "$EXISTING_CERT" ]; then
   certbot certonly --standalone \
     --non-interactive \
     --agree-tos \
+    --expand \
     --email "$CERTBOT_EMAIL" \
     $CERTBOT_DOMAINS
 
