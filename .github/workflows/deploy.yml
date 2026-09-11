@@ -10,20 +10,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger dragonboy-devops-service
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          curl -X POST \
+          PAYLOAD=$(jq -n \
+            --arg service "nginx-service" \
+            --arg dir "/root/MICROSERVICE_NGINX_SERVICE" \
+            --arg port "docker" \
+            --arg skip "true" \
+            --arg actor "${{ github.actor }}" \
+            --arg commit "${{ github.sha }}" \
+            --arg message "$COMMIT_MESSAGE" \
+            '{
+              event_type: "deploy",
+              client_payload: {
+                service: $service,
+                dir: $dir,
+                port: $port,
+                skip_health_check: $skip,
+                actor: $actor,
+                commit: $commit,
+                message: $message
+              }
+            }')
+
+          curl -sf -X POST \
             -H "Authorization: token ${{ secrets.DEPLOY_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
             https://api.github.com/repos/DANG-PH/dragonboy-devops-service/dispatches \
-            -d '{
-              "event_type": "deploy",
-              "client_payload": {
-                "service": "nginx-service",
-                "dir": "/root/MICROSERVICE_NGINX_SERVICE",
-                "port": "docker",
-                "skip_health_check": "true",
-                "actor": "${{ github.actor }}",
-                "commit": "${{ github.sha }}",
-                "message": "${{ github.event.head_commit.message }}"
-              }
-            }'
+            -d "$PAYLOAD"
