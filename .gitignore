@@ -1,5 +1,8 @@
 # Secrets
 .env
+# htpasswd phải được ignore, nếu không `git clean -fd` trong deploy sẽ xoá file
+# rồi Docker tự tạo thư mục rỗng thay thế -> nginx lỗi "pread() ... Is a directory"
+htpasswd
 
 # Backup data (không bao giờ commit data DB)
 backup/data/
